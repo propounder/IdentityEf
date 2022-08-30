@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using IdentityServer.Data;
+using Duende.IdentityServer.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,7 +14,30 @@ builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 builder.Services.AddDefaultIdentity<IdentityUser>(options => options.SignIn.RequireConfirmedAccount = true)
     .AddEntityFrameworkStores<ApplicationDbContext>();
 builder.Services.AddRazorPages();
+builder.Services.AddIdentityServer()
+                .AddInMemoryClients(new Client[] {
+                    new Client
+                    {
+                        ClientId = "client",
+                        AllowedGrantTypes = GrantTypes.Implicit,
+                        RedirectUris = { "https://localhost:5002/signin-oidc" },
+                        PostLogoutRedirectUris = { "https://localhost:5002/signout-callback-oidc" },
+                        FrontChannelLogoutUri = "https://localhost:5002/signout-oidc",
+                        AllowedScopes = { "openid", "profile", "email", "phone" }
+                    }
+                })
+                .AddInMemoryIdentityResources(new IdentityResource[] {
+                    new IdentityResources.OpenId(),
+                    new IdentityResources.Profile(),
+                    new IdentityResources.Email(),
+                    new IdentityResources.Phone(),
+                })
+                .AddAspNetIdentity<IdentityUser>();
 
+builder.Services.AddLogging(options =>
+{
+    options.AddFilter("Duende", LogLevel.Debug);
+});
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -33,9 +57,12 @@ app.UseStaticFiles();
 
 app.UseRouting();
 
-app.UseAuthentication();
+//app.UseAuthentication();
+app.UseIdentityServer();
 app.UseAuthorization();
 
-app.MapRazorPages();
-
+app.UseEndpoints(endpoints =>
+    {
+        endpoints.MapRazorPages();
+    });
 app.Run();
