@@ -2,11 +2,22 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using IdentityServer.Data;
 using Duende.IdentityServer.Models;
+using Serilog;
+using Serilog.Events;
+using Serilog.Sinks.SystemConsole.Themes;
+using IdentityServer;
+
+Log.Logger = new LoggerConfiguration()
+  .WriteTo.Console()
+  .CreateBootstrapLogger();
+
+Log.Information("Starting up");
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+var migrationsAssembly = typeof(Program).Assembly.GetName().Name;
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlite(connectionString));
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
@@ -15,29 +26,37 @@ builder.Services.AddDefaultIdentity<IdentityUser>(options => options.SignIn.Requ
     .AddEntityFrameworkStores<ApplicationDbContext>();
 builder.Services.AddRazorPages();
 builder.Services.AddIdentityServer()
-                .AddInMemoryClients(new Client[] {
-                    new Client
-                    {
-                        ClientId = "client",
-                        AllowedGrantTypes = GrantTypes.Implicit,
-                        RedirectUris = { "https://localhost:5002/signin-oidc" },
-                        PostLogoutRedirectUris = { "https://localhost:5002/signout-callback-oidc" },
-                        FrontChannelLogoutUri = "https://localhost:5002/signout-oidc",
-                        AllowedScopes = { "openid", "profile", "email", "phone" }
-                    }
-                })
-                .AddInMemoryIdentityResources(new IdentityResource[] {
-                    new IdentityResources.OpenId(),
-                    new IdentityResources.Profile(),
-                    new IdentityResources.Email(),
-                    new IdentityResources.Phone(),
-                })
+                .AddConfigurationStore(options =>
+            {
+                options.ConfigureDbContext = b => b.UseSqlite(connectionString,
+                    sql => sql.MigrationsAssembly(migrationsAssembly));
+            })
+        .AddOperationalStore(options =>
+        {
+            options.ConfigureDbContext = b => b.UseSqlite(connectionString,
+                sql => sql.MigrationsAssembly(migrationsAssembly));
+        })
                 .AddAspNetIdentity<IdentityUser>();
 
 builder.Services.AddLogging(options =>
 {
     options.AddFilter("Duende", LogLevel.Debug);
 });
+
+builder.Host.UseSerilog((ctx, lc) =>
+{
+  lc.MinimumLevel.Debug()
+    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Information)
+    .MinimumLevel.Override("Microsoft.AspNetCore.Authentication", LogEventLevel.Information)
+    .MinimumLevel.Override("System", LogEventLevel.Warning)
+    .WriteTo.Console(
+      outputTemplate:
+      "[{Timestamp:HH:mm:ss} {Level}] {SourceContext}{NewLine}{Message:lj}{NewLine}{Exception}{NewLine}",
+      theme: AnsiConsoleTheme.Code)
+    .Enrich.FromLogContext();
+});
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -63,6 +82,14 @@ app.UseAuthorization();
 
 app.UseEndpoints(endpoints =>
     {
-        endpoints.MapRazorPages();
+        endpoints.MapRazorPages().RequireAuthorization();
     });
+
+if (args.Contains("/seed"))
+{
+  Log.Information("Seeding database...");
+  SeedData.EnsureSeedData(app);
+  Log.Information("Done seeding database. Exiting.");
+  return;
+}
 app.Run();
